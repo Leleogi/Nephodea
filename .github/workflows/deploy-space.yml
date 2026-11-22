@@ -1,0 +1,31 @@
+# Sends the app to the Hugging Face Space every time something is merged into main.
+# Needs a GitHub secret called HF_TOKEN (a Hugging Face access token with write rights).
+
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # also lets you start it by hand from the Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install the Hugging Face upload tool
+        run: pip install huggingface_hub==0.26.2
+
+      - name: Upload the app to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          huggingface-cli upload Leleogi/nephodea . . \
+            --repo-type space \
+            --exclude ".git/*" ".github/*" \
+            --commit-message "Deploy from GitHub ${{ github.sha }}"
