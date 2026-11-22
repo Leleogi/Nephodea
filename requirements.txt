@@ -1,0 +1,14 @@
+# Packages needed to run current_model.pt (Python 3.10)
+ultralytics==8.2.1
+torch==2.2.2
+torchvision==0.17.2
+opencv-python==4.9.0.80
+numpy==1.26.4
+
+# Not used directly, but the model file cannot load without it
+dill==0.3.8
+
+# Web app
+flask==3.0.3
+pillow==12.3.0
+pillow-heif==1.8.1

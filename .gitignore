@@ -1,0 +1,31 @@
+# Project specific #
+data/
+mlruns/
+runs/
+
+# Test photos can contain GPS locations
+test_images/
+
+# Keep only the trained model, not the generic base weights
+*.pt
+!current_model.pt
+
+# Python environments
+venv/
+venv310/
+python310/
+
+# Secrets
+.env
+
+# Byte-compiled
+__pycache__/
+
+# Distribution / packaging
+*.egg-info/
+
+# Testing
+.pytest_cache/
+
+# macOS
+.DS_Store

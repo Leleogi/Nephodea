@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>CloudAI: Cloud Type Classifier</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #f3f6fa;
+      --card: #ffffff;
+      --text: #17212b;
+      --muted: #5b6875;
+      --accent: #1f6fb2;
+      --accent-text: #ffffff;
+      --border: #d8e0e8;
+      --error-background: #fdecea;
+      --error-text: #9b1c13;
+      --note-background: #fff5db;
+      --note-text: #6b4e00;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #10161c;
+        --card: #1a232c;
+        --text: #eef2f6;
+        --muted: #a3b0bc;
+        --accent: #5aa9e6;
+        --accent-text: #0c1319;
+        --border: #33414e;
+        --error-background: #3d1b18;
+        --error-text: #ffb4ab;
+        --note-background: #372c0c;
+        --note-text: #f4d67a;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 32px 16px;
+    }
+
+    h1 { margin: 0; font-size: 1.75rem; line-height: 1.2; }
+
+    .intro { margin: 4px 0 24px; color: var(--muted); }
+
+    .card {
+      margin-bottom: 16px;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    label { display: block; margin-bottom: 8px; font-weight: 600; }
+
+    input[type="file"] { display: block; width: 100%; margin-bottom: 4px; font: inherit; }
+
+    .hint { margin: 0 0 16px; color: var(--muted); font-size: 0.875rem; }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      color: var(--accent-text);
+      border: 0;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: 0.65; cursor: wait; }
+
+    .message { margin: 0 0 16px; padding: 12px 16px; border-radius: 8px; }
+    .error { background: var(--error-background); color: var(--error-text); }
+    .note { margin: 16px 0 0; background: var(--note-background); color: var(--note-text); }
+
+    .result { display: grid; gap: 20px; }
+
+    .result img { display: block; width: 100%; height: auto; border-radius: 8px; }
+
+    .top-class { margin: 0; font-size: 2rem; font-weight: 700; line-height: 1.2; }
+
+    .others { margin: 16px 0 0; padding: 0; list-style: none; color: var(--muted); }
+
+    /* Photo next to the result on larger screens, above it on a phone */
+    @media (min-width: 640px) {
+      .result { grid-template-columns: 1fr 1fr; align-items: start; }
+    }
+
+    footer { color: var(--muted); font-size: 0.875rem; }
+    footer a { color: inherit; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CloudAI</h1>
+  <p class="intro">Upload a photo of the sky to find out which clouds it shows.</p>
+
+  <form class="card" id="upload-form" action="/" method="post" enctype="multipart/form-data">
+    <p class="message error" id="error" role="alert" {% if not error %}hidden{% endif %}>{{ error }}</p>
+
+    <label for="photo">Your sky photo</label>
+    <input type="file" name="photo" id="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required>
+    <p class="hint">JPEG, PNG or HEIC, up to {{ max_mb }} MB. Your photo is not stored.</p>
+
+    <button type="submit" id="analyze">Analyze</button>
+  </form>
+
+  {% if result %}
+  <section class="card result" aria-live="polite">
+    <img src="{{ result.preview }}" alt="Your uploaded sky photo">
+    <div>
+      {% if result.no_clouds %}
+      <p class="top-class">No clouds recognized</p>
+      <p>We couldn't spot any clouds in this photo. Try a photo that shows more of the sky.</p>
+      {% else %}
+      <p class="top-class">{{ result.top.name }}, {{ result.top.percent }}</p>
+      {% endif %}
+
+      <ul class="others">
+        {% for other in result.others %}
+        <li>{{ other.name }}, {{ other.percent }}</li>
+        {% endfor %}
+      </ul>
+
+      {% if result.unsure %}
+      <p class="message note">The model is unsure about this photo, so take this result with a grain of salt.</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <footer><a href="/about">About this project</a></footer>
+</main>
+
+<script>
+  const form = document.getElementById("upload-form");
+  const button = document.getElementById("analyze");
+  const fileInput = document.getElementById("photo");
+  const errorBox = document.getElementById("error");
+  const maxBytes = {{ max_mb }} * 1024 * 1024;
+
+  form.addEventListener("submit", function (event) {
+    // Catch files that are too large before spending time uploading them
+    if (fileInput.files[0] && fileInput.files[0].size > maxBytes) {
+      event.preventDefault();
+      errorBox.textContent = "This file is too large. Please choose a photo under {{ max_mb }} MB.";
+      errorBox.hidden = false;
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Analyzing…";
+  });
+
+  // Reset the button if the user comes back with the browser's back button
+  window.addEventListener("pageshow", function () {
+    button.disabled = false;
+    button.textContent = "Analyze";
+  });
+</script>
+</body>
+</html>
