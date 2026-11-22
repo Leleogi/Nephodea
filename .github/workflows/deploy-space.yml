@@ -23,6 +23,12 @@ jobs:
       - name: Install the Hugging Face upload tool
         run: pip install huggingface_hub==0.26.2
 
+      - name: Create the Space as Static if it does not exist yet
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "from huggingface_hub import create_repo; create_repo('Leleogi/nephodea', repo_type='space', space_sdk='static', exist_ok=True)"
+
       - name: Upload space/ to the Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
