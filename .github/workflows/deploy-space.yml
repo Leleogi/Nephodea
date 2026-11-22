@@ -27,12 +27,27 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python -c "from huggingface_hub import create_repo; create_repo('Leleogi/nephodea', repo_type='space', space_sdk='static', exist_ok=True)"
+          python - <<'PY'
+          from huggingface_hub import HfApi
+          api = HfApi()
+          if api.repo_exists("Leleogi/nephodea", repo_type="space"):
+              print("The Space already exists.")
+          else:
+              api.create_repo("Leleogi/nephodea", repo_type="space", space_sdk="static")
+              print("Created the Space as Static.")
+          PY
 
       - name: Upload space/ to the Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          huggingface-cli upload Leleogi/nephodea space . \
-            --repo-type space \
-            --commit-message "Deploy from GitHub ${{ github.sha }}"
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          HfApi().upload_folder(
+              repo_id="Leleogi/nephodea",
+              repo_type="space",
+              folder_path="space",
+              commit_message="Deploy from GitHub " + os.environ["GITHUB_SHA"],
+          )
+          PY
