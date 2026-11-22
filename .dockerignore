@@ -1,0 +1,9 @@
+# Files that should not be copied into the server
+.git
+venv/
+venv310/
+python310/
+test_images/
+__pycache__/
+*.pyc
+.DS_Store

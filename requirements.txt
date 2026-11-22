@@ -10,5 +10,6 @@ dill==0.3.8
 
 # Web app
 flask==3.0.3
+gunicorn==22.0.0
 pillow==12.3.0
 pillow-heif==1.8.1

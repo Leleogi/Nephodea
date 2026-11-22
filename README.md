@@ -1,3 +1,14 @@
+---
+title: Nephodea
+emoji: ☁️
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_port: 7860
+license: mit
+short_description: Recognise cloud types in sky photos
+---
+
 # Nephodea
 
 Nephodea is a small web app that recognises cloud types in sky photos. You upload a photo and it shows the most likely cloud type with its probability, plus the next most likely ones. It can also tell when a photo probably shows no clouds.
@@ -38,6 +49,19 @@ Start the web app, then open http://127.0.0.1:5001 in your browser:
 python src/webapp.py
 ```
 
+## How it is hosted
+
+The live page runs on [Hugging Face Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker). The `Dockerfile` describes the server: Python 3.10, the CPU-only version of PyTorch, and the production web server `gunicorn` on port 7860. The block between the `---` lines at the top of this file tells Hugging Face how to run it.
+
+To try the server version on your own computer (needs Docker Desktop):
+
+```bash
+docker build -t nephodea .
+docker run -p 7860:7860 nephodea
+```
+
+Then open http://127.0.0.1:7860.
+
 ## Project files
 
 | File | What it does |
@@ -47,6 +71,7 @@ python src/webapp.py
 | `predict.py` | Classifies one photo from the command line |
 | `current_model.pt` | The trained model |
 | `requirements.txt` | The Python packages, with pinned versions |
+| `Dockerfile` | The recipe for the server on Hugging Face |
 
 ## Credits
 
