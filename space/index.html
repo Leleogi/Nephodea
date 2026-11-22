@@ -113,6 +113,20 @@
     .about { color: var(--muted); font-size: 0.95rem; }
     .about h2 { margin: 0 0 8px; font-size: 1.1rem; color: var(--text); }
     .about p { margin: 0 0 8px; }
+    .about a { color: inherit; }
+
+    .result-heading { margin: 0 0 4px; color: var(--muted); font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    /* Cloud regions: the photo with the sky and cloud map drawn over it */
+    .regions h2 { margin: 0 0 8px; font-size: 1.1rem; }
+    .regions canvas { display: block; width: 100%; height: auto; border-radius: 8px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.875rem; }
+    .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border: 1px solid var(--border); border-radius: 2px; vertical-align: -1px; }
+    .region-list { display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+    .region-list li { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
+    .region-list canvas { width: 96px; height: 96px; border-radius: 6px; }
+    .region-name { margin: 0; font-weight: 700; }
+    .region-others { margin: 0; color: var(--muted); font-size: 0.875rem; }
 
     footer { color: var(--muted); font-size: 0.875rem; }
     footer a { color: inherit; }
@@ -136,6 +150,7 @@
   <section class="card result" id="result" aria-live="polite" hidden>
     <img id="preview" alt="Your uploaded sky photo">
     <div>
+      <p class="result-heading">Whole photo</p>
       <p class="top-class" id="top-class"></p>
       <p id="no-clouds-text" hidden>We couldn't spot any clouds in this photo. Try a photo that shows more of the sky.</p>
       <p class="hint">Other possible answers:</p>
@@ -144,12 +159,26 @@
     </div>
   </section>
 
+  <section class="card regions" id="regions" aria-live="polite" hidden>
+    <h2>Cloud regions</h2>
+    <p id="regions-summary"></p>
+    <canvas id="map" aria-label="Your photo with the sky and the clouds marked"></canvas>
+    <ul class="legend">
+      <li><span style="background: rgba(255, 190, 0, 0.6)"></span>Cloud</li>
+      <li><span style="background: transparent"></span>Blue sky</li>
+      <li><span style="background: rgba(0, 0, 0, 0.55)"></span>Not sky</li>
+    </ul>
+    <ul class="region-list" id="region-list"></ul>
+  </section>
+
   <section class="card about" id="about">
     <h2>About Nephodea</h2>
     <p>Nephodea is a test version of a cloud type classifier, built as a learning project.</p>
     <p>A small image model looks at your whole photo and estimates how likely each of 12 classes is: 11 cloud types, or no clouds. It is right about 3 times out of 4, so treat its answer as a good guess.</p>
+    <p>To look at clouds one by one, a second model first finds the sky in your photo. Inside the sky, a simple colour rule tells clouds from blue sky: clear sky is much more blue than red, while clouds are white or grey. The biggest cloud areas are then cut out and classified on their own. The colour rule can mistake a hazy or sunset sky for cloud.</p>
     <p>The model runs inside your browser. Your photo is not uploaded anywhere.</p>
     <p>The model was trained during a 2024 hackathon. Thanks to the team who helped train it.</p>
+    <p>The sky model is a small U-2-Net by <a href="https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing">xiongzhu666</a>, and the colour rule comes from <a href="https://github.com/yuhao-nie/Cloud-dection-in-sky-images">Yuhao Nie</a>. Both are shared under the MIT licence.</p>
   </section>
 
   <footer><a href="https://github.com/Leleogi/nephodea">Source code on GitHub</a></footer>
@@ -161,12 +190,21 @@
   const IMAGE_SIZE = 640;    // the model was trained on 640 x 640 pixel images
   const UNSURE_BELOW = 0.5;  // below this probability we tell the user the model is unsure
 
+  // Settings for finding cloud regions
+  const SKY_SIZE = 384;       // the sky model works on 384 x 384 pixel images
+  const CLOUD_BELOW = 0.05;   // colour rule: a sky pixel is cloud when (blue - red) / (blue + red) is at most this
+  const GRID = 96;            // clouds are grouped on a coarse 96 x 96 grid
+  const MIN_REGION = 0.03;    // a cloud region must cover at least 3 % of the photo
+  const MAX_REGIONS = 4;      // classify at most this many regions
+  const MIN_CROP = 0.3;       // a cut-out is at least 30 % of the photo's short side, so it shows some context
+
   const form = document.getElementById("upload-form");
   const button = document.getElementById("analyze");
   const fileInput = document.getElementById("photo");
   const errorBox = document.getElementById("error");
 
-  let session = null;  // the loaded model
+  let session = null;     // the loaded cloud type model
+  let skySession = null;  // the loaded sky model
   let labels = [];     // the 12 class names, in the model's order
 
   // Load the model and the class names once, when the page opens
@@ -176,6 +214,7 @@
       ort.env.wasm.numThreads = 1;  // threads need special server settings, one is fast enough
       labels = await (await fetch("labels.json")).json();
       session = await ort.InferenceSession.create("nephodea.onnx");
+      skySession = await ort.InferenceSession.create("sky.onnx");
       button.disabled = false;
       button.textContent = "Analyze";
     } catch (error) {
@@ -210,13 +249,17 @@
     }
   }
 
-  // Prepare the photo the same way as during training:
-  // scale the short side to 640 pixels, cut out the centre square,
-  // and turn the pixels into numbers between 0 and 1.
-  function photoToTensor(photo) {
+  // The centre square of the photo, which is what the model looked at during training
+  function centreSquare(photo) {
     const side = Math.min(photo.width, photo.height);
-    const left = (photo.width - side) / 2;
-    const top = (photo.height - side) / 2;
+    return { left: (photo.width - side) / 2, top: (photo.height - side) / 2, side };
+  }
+
+  // Prepare the photo the same way as during training:
+  // cut out a square (the centre square unless told otherwise), scale it to 640 pixels,
+  // and turn the pixels into numbers between 0 and 1.
+  function photoToTensor(photo, square) {
+    const { left, top, side } = square;
 
     // Shrink in steps of one half: one big jump makes the picture grainy,
     // and the model would then see something different from its training photos
@@ -249,15 +292,279 @@
     return new ort.Tensor("float32", data, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
   }
 
-  // Run the model and return the 5 most likely classes
-  async function classify(photo) {
-    const input = photoToTensor(photo);
+  // Run the model on a square of the photo and return the 5 most likely classes
+  async function classify(photo, square = centreSquare(photo)) {
+    const input = photoToTensor(photo, square);
     const output = await session.run({ [session.inputNames[0]]: input });
     const probabilities = output[session.outputNames[0]].data;
     return Array.from(probabilities)
       .map((probability, index) => ({ name: labels[index], probability }))
       .sort((a, b) => b.probability - a.probability)
       .slice(0, 5);
+  }
+
+  // Step 1: find the sky. The sky model gets the whole photo squeezed to 384 x 384 pixels,
+  // with its colours adjusted the way it was trained (the usual ImageNet averages).
+  // It returns, for every pixel, how likely it is to be sky (0 to 1).
+  async function findSky(photo) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = SKY_SIZE;
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(photo, 0, 0, SKY_SIZE, SKY_SIZE);
+    const pixels = context.getImageData(0, 0, SKY_SIZE, SKY_SIZE).data;
+
+    const mean = [0.485, 0.456, 0.406];
+    const spread = [0.229, 0.224, 0.225];
+    const area = SKY_SIZE * SKY_SIZE;
+    const data = new Float32Array(3 * area);
+    for (let i = 0; i < area; i++) {
+      for (let c = 0; c < 3; c++) {
+        data[c * area + i] = (pixels[i * 4 + c] / 255 - mean[c]) / spread[c];
+      }
+    }
+    const input = new ort.Tensor("float32", data, [1, 3, SKY_SIZE, SKY_SIZE]);
+    const output = await skySession.run({ [skySession.inputNames[0]]: input });
+    return { pixels, sky: output[skySession.outputNames[0]].data };
+  }
+
+  // Step 2: inside the sky, tell clouds from blue sky with a colour rule.
+  // Clear sky scatters much more blue light than red; clouds scatter both about equally,
+  // so they look white or grey. Returns 0 (not sky), 1 (blue sky) or 2 (cloud) per pixel.
+  function findClouds(pixels, sky) {
+    const area = SKY_SIZE * SKY_SIZE;
+    const map = new Uint8Array(area);
+    let skyCount = 0, cloudCount = 0;
+    for (let i = 0; i < area; i++) {
+      if (sky[i] < 0.5) continue;
+      skyCount++;
+      const red = pixels[i * 4], blue = pixels[i * 4 + 2];
+      const ratio = red + blue === 0 ? 0 : (blue - red) / (blue + red);
+      if (ratio <= CLOUD_BELOW) {
+        map[i] = 2;
+        cloudCount++;
+      } else {
+        map[i] = 1;
+      }
+    }
+    return { map, skyShare: skyCount / area, cloudShare: skyCount ? cloudCount / skyCount : 0 };
+  }
+
+  // Shrink the 384 x 384 map to the coarse grid: a cell is "on" when at least half of its pixels pass the test
+  function toGrid(map, test) {
+    const cell = SKY_SIZE / GRID;
+    const grid = new Uint8Array(GRID * GRID);
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        let count = 0;
+        for (let y = gy * cell; y < (gy + 1) * cell; y++) {
+          for (let x = gx * cell; x < (gx + 1) * cell; x++) {
+            if (test(map[y * SKY_SIZE + x])) count++;
+          }
+        }
+        grid[gy * GRID + gx] = count * 2 >= cell * cell ? 1 : 0;
+      }
+    }
+    return grid;
+  }
+
+  // Step 3: group cloud pixels that touch into regions.
+  // We use a coarse grid so that small gaps between puffs of the same cloud do not split it up.
+  // Returns the biggest regions as boxes, with sides from 0 to 1 (a share of the photo's width and height).
+  function findRegions(map) {
+    const cloudy = toGrid(map, value => value === 2);
+
+    // Grow every cloudy cell by one cell in each direction, to bridge small gaps
+    const grown = new Uint8Array(GRID * GRID);
+    for (let y = 0; y < GRID; y++) {
+      for (let x = 0; x < GRID; x++) {
+        if (!cloudy[y * GRID + x]) continue;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const ny = y + dy, nx = x + dx;
+            if (ny >= 0 && ny < GRID && nx >= 0 && nx < GRID) grown[ny * GRID + nx] = 1;
+          }
+        }
+      }
+    }
+
+    // Walk through connected cells and measure each group
+    const seen = new Uint8Array(GRID * GRID);
+    const regions = [];
+    for (let start = 0; start < GRID * GRID; start++) {
+      if (!grown[start] || seen[start]) continue;
+      const stack = [start];
+      seen[start] = 1;
+      const cells = [];  // the cloud cells of this region
+      let left = GRID, right = 0, top = GRID, bottom = 0;
+      while (stack.length) {
+        const index = stack.pop();
+        const x = index % GRID, y = Math.floor(index / GRID);
+        if (cloudy[index]) cells.push(index);  // keep only real cloud, not the grown edge
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
+        const neighbours = [x > 0 ? index - 1 : -1, x < GRID - 1 ? index + 1 : -1,
+                            y > 0 ? index - GRID : -1, y < GRID - 1 ? index + GRID : -1];
+        for (const next of neighbours) {
+          if (next >= 0 && grown[next] && !seen[next]) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+      regions.push({
+        cells,
+        share: cells.length / (GRID * GRID),
+        left: left / GRID, top: top / GRID,
+        width: (right - left + 1) / GRID, height: (bottom - top + 1) / GRID,
+      });
+    }
+    return regions
+      .filter(region => region.share >= MIN_REGION)
+      .sort((a, b) => b.share - a.share)
+      .slice(0, MAX_REGIONS);
+  }
+
+  // Choose the square of the photo that the classifier looks at for a region.
+  // It must be big enough to hold the region, and is slid around to hold as much of the region's
+  // cloud as possible, plus as much other sky as possible (trees and houses only confuse the classifier).
+  function regionSquare(photo, region, skyGrid) {
+    const shortSide = Math.min(photo.width, photo.height);
+    const side = Math.min(shortSide, Math.max(region.width * photo.width, region.height * photo.height, MIN_CROP * shortSide));
+
+    // Score per grid cell: 2 for this region's cloud, 1 for other sky, 0 for anything else
+    const score = new Float32Array(GRID * GRID);
+    for (let i = 0; i < score.length; i++) score[i] = skyGrid[i];
+    for (const index of region.cells) score[index] = 2;
+
+    // Running totals, so the score of any rectangle takes only four look-ups
+    const total = new Float32Array((GRID + 1) * (GRID + 1));
+    for (let y = 0; y < GRID; y++) {
+      for (let x = 0; x < GRID; x++) {
+        total[(y + 1) * (GRID + 1) + x + 1] = score[y * GRID + x] + total[y * (GRID + 1) + x + 1] +
+          total[(y + 1) * (GRID + 1) + x] - total[y * (GRID + 1) + x];
+      }
+    }
+    const boxScore = (x0, y0, x1, y1) => total[y1 * (GRID + 1) + x1] - total[y0 * (GRID + 1) + x1] -
+      total[y1 * (GRID + 1) + x0] + total[y0 * (GRID + 1) + x0];
+
+    // The square's size measured in grid cells (the grid is stretched over the photo)
+    const cellsWide = Math.round(side / photo.width * GRID);
+    const cellsHigh = Math.round(side / photo.height * GRID);
+    let best = { score: -1, x: 0, y: 0 };
+    for (let y = 0; y + cellsHigh <= GRID; y++) {
+      for (let x = 0; x + cellsWide <= GRID; x++) {
+        const value = boxScore(x, y, x + cellsWide, y + cellsHigh);
+        if (value > best.score) best = { score: value, x, y };
+      }
+    }
+    const left = Math.min(best.x / GRID * photo.width, photo.width - side);
+    const top = Math.min(best.y / GRID * photo.height, photo.height - side);
+    return { left, top, side };
+  }
+
+  // Draw the photo with the map on top: dark where there is no sky, yellow where there is cloud,
+  // and a numbered box around each region
+  function drawMap(photo, map, regions) {
+    const overlay = document.createElement("canvas");
+    overlay.width = overlay.height = SKY_SIZE;
+    const overlayContext = overlay.getContext("2d");
+    const image = overlayContext.createImageData(SKY_SIZE, SKY_SIZE);
+    for (let i = 0; i < map.length; i++) {
+      if (map[i] === 0) image.data.set([0, 0, 0, 140], i * 4);
+      else if (map[i] === 2) image.data.set([255, 190, 0, 110], i * 4);
+    }
+    overlayContext.putImageData(image, 0, 0);
+
+    const canvas = document.getElementById("map");
+    const scale = Math.min(1, 1200 / Math.max(photo.width, photo.height));
+    canvas.width = Math.round(photo.width * scale);
+    canvas.height = Math.round(photo.height * scale);
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+    context.drawImage(overlay, 0, 0, canvas.width, canvas.height);
+
+    const line = Math.max(2, canvas.width / 300);
+    context.font = "bold " + Math.round(line * 9) + "px sans-serif";
+    context.textBaseline = "top";
+    regions.forEach((region, number) => {
+      const x = region.left * canvas.width, y = region.top * canvas.height;
+      context.lineWidth = line;
+      context.strokeStyle = "#ffffff";
+      context.strokeRect(x, y, region.width * canvas.width, region.height * canvas.height);
+      const label = String(number + 1);
+      const labelWidth = context.measureText(label).width + line * 4;
+      context.fillStyle = "#1f6fb2";
+      context.fillRect(x, y, labelWidth, line * 12);
+      context.fillStyle = "#ffffff";
+      context.fillText(label, x + line * 2, y + line * 1.5);
+    });
+  }
+
+  // Run steps 1 to 3, then classify each region
+  async function analyseRegions(photo) {
+    const { pixels, sky } = await findSky(photo);
+    const { map, skyShare, cloudShare } = findClouds(pixels, sky);
+    const regions = skyShare > 0 && cloudShare > 0 ? findRegions(map) : [];
+    const skyGrid = toGrid(map, value => value > 0);
+    for (const region of regions) {
+      region.square = regionSquare(photo, region, skyGrid);
+      region.topFive = await classify(photo, region.square);
+    }
+    return { map, skyShare, cloudShare, regions };
+  }
+
+  function showRegions(photo, analysis) {
+    const { map, skyShare, cloudShare, regions } = analysis;
+    drawMap(photo, map, regions);
+
+    let summary;
+    if (skyShare < 0.02) {
+      summary = "We couldn't find any sky in this photo.";
+    } else {
+      summary = "About " + Math.round(skyShare * 100) + " % of the photo is sky, and clouds cover about " +
+        Math.round(cloudShare * 100) + " % of that sky.";
+      if (regions.length === 0) {
+        summary += cloudShare < 0.05
+          ? " The sky looks clear, so there are no cloud regions to look at."
+          : " The clouds are too small or too spread out to look at one by one.";
+      } else if (regions.length === 1) {
+        summary += " Here is the biggest cloud area, classified on its own.";
+      } else {
+        summary += " Here are the " + regions.length + " biggest cloud areas, each classified on its own.";
+      }
+    }
+    document.getElementById("regions-summary").textContent = summary;
+
+    const list = document.getElementById("region-list");
+    list.replaceChildren();
+    regions.forEach((region, number) => {
+      const item = document.createElement("li");
+
+      const thumbnail = document.createElement("canvas");
+      thumbnail.width = thumbnail.height = 192;
+      const { left, top, side } = region.square;
+      thumbnail.getContext("2d").drawImage(photo, left, top, side, side, 0, 0, 192, 192);
+      thumbnail.setAttribute("aria-hidden", "true");
+
+      const text = document.createElement("div");
+      const best = region.topFive[0];
+      const name = document.createElement("p");
+      name.className = "region-name";
+      name.textContent = (number + 1) + ". " +
+        (best.name === "not_cloud" ? "Probably not a cloud" : displayName(best.name)) + ", " + percent(best.probability);
+      const others = document.createElement("p");
+      others.className = "region-others";
+      others.textContent = "Next: " + region.topFive.slice(1, 3)
+        .map(other => displayName(other.name) + " " + percent(other.probability)).join(", ");
+      text.append(name, others);
+
+      item.append(thumbnail, text);
+      list.appendChild(item);
+    });
+
+    document.getElementById("regions").hidden = false;
   }
 
   function showResult(file, topFive) {
@@ -299,7 +606,10 @@
     button.textContent = "Analyzing…";
     try {
       const photo = await openPhoto(file);
+      document.getElementById("regions").hidden = true;
       showResult(file, await classify(photo));
+      button.textContent = "Looking for cloud regions…";
+      showRegions(photo, await analyseRegions(photo));
     } catch (error) {
       console.error(error);
       showError(error.message || "Something went wrong. Please try another photo.");

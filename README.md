@@ -12,6 +12,16 @@ altocumulus, altostratus, cirrocumulus, cirrostratus, cirrus, cumulonimbus, cumu
 
 On its validation set, the correct class was the top answer for 73 % of the photos, and among the top 5 answers for 96 %.
 
+## Cloud regions
+
+The live page also looks at clouds one by one, in three steps:
+
+1. **Find the sky.** A small sky segmentation model (U-2-Net, about 4.5 MB) marks which pixels of the photo are sky.
+2. **Tell clouds from blue sky.** Inside the sky, a colour rule decides for each pixel: clear sky scatters much more blue light than red, while clouds look white or grey. A pixel counts as cloud when (blue − red) / (blue + red) is 0.05 or less.
+3. **Classify each cloud region.** Cloud pixels that touch are grouped into regions. The biggest ones (up to 4) are cut out as squares and classified on their own.
+
+The colour rule is simple, so a hazy sky near the horizon, a sunset or a night sky can be mistaken for cloud.
+
 On the live page the model runs in your browser, so photos are never uploaded. The Flask version keeps uploaded photos in memory only while it analyses them and never saves them.
 
 ## Run it on your own computer
@@ -57,6 +67,8 @@ Then open http://127.0.0.1:8000.
 
 After changing `current_model.pt`, rebuild the browser model with `python tools/export_onnx.py` (needs `pip install onnx==1.16.1`).
 
+The sky model `space/sky.onnx` was made with `python tools/convert_sky_model.py` (needs `pip install onnx==1.16.1 numpy`). The author only publishes it in the ncnn format for phones, so the script downloads those files and rewrites the same network as ONNX, without changing its weights.
+
 The `Dockerfile` runs the Flask version on a server instead (port 7860). It is kept for hosts that run Docker, for example a paid Hugging Face Space or Google Cloud Run.
 
 ## Project files
@@ -70,6 +82,7 @@ The `Dockerfile` runs the Flask version on a server instead (port 7860). It is k
 | `requirements.txt` | The Python packages, with pinned versions |
 | `space/` | The browser version that runs on Hugging Face |
 | `tools/export_onnx.py` | Converts the model for the browser |
+| `tools/convert_sky_model.py` | Converts the sky model for the browser |
 | `Dockerfile` | The recipe for running the Flask version on a server |
 
 ## Credits
@@ -77,5 +90,9 @@ The `Dockerfile` runs the Flask version on a server instead (port 7860). It is k
 Thanks to Michael Herrmann, Capucine Lechartre and Melina Abeling, who helped train this model.
 
 The original code was created at MeteoSwiss (Federal Office of Meteorology and Climatology) and is used under the MIT licence, see `LICENSE`.
+
+The sky segmentation model (`space/sky.onnx`) is the small U-2-Net sky model from [Sky-Segmentation-and-Post-processing](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing) by xiongzhu666, converted to ONNX, MIT licence.
+
+The cloud colour rule (normalised red-blue ratio, threshold 0.05) comes from [Cloud detection in sky images](https://github.com/yuhao-nie/Cloud-dection-in-sky-images) by Yuhao Nie, MIT licence.
 
 This project uses [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), which is licensed under AGPL-3.0.

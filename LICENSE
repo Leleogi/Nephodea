@@ -17,3 +17,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+---------------------------------------------------------------------------
+
+Third-party components
+
+space/sky.onnx is converted from the sky segmentation model in
+https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing
+Copyright (c) 2021 xiongzhu666, MIT License.
+
+The cloud colour rule in space/index.html follows
+https://github.com/yuhao-nie/Cloud-dection-in-sky-images
+Copyright (c) 2024 Yuhao Nie, MIT License.
+
+Both are used under the same MIT License terms as printed above
+(with their own copyright lines in place of the one at the top).
