@@ -60,5 +60,6 @@ This started as a 2024 hackathon team project (then called CloudAI). Training wa
 - [x] Project prepared for Git (not committed yet)
 - [x] Fixed Flask web app
 - [x] Upload checks and privacy (photos stay in memory only)
-- [ ] Dockerfile for deployment
-- [ ] Deploy
+- [x] Dockerfile for deployment
+- [x] Deploy (free Static Hugging Face Space, model runs in the browser)
+- [x] Cloud regions on the live page: sky model (`space/sky.onnx`, MIT, from xiongzhu666) + red/blue colour rule (MIT, Yuhao Nie; per-photo Otsu cutoff, grey check, hole filling, overcast shortcut) + classifier on 9 overlapping tiles grouped by type. The Flask version does not have this yet.

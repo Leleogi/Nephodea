@@ -113,6 +113,21 @@
     .about { color: var(--muted); font-size: 0.95rem; }
     .about h2 { margin: 0 0 8px; font-size: 1.1rem; color: var(--text); }
     .about p { margin: 0 0 8px; }
+    .about a { color: inherit; }
+
+    .result-heading { margin: 0 0 4px; color: var(--muted); font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    /* Cloud regions: the photo with the sky and cloud map drawn over it */
+    .regions h2 { margin: 0 0 8px; font-size: 1.1rem; }
+    .regions canvas { display: block; width: 100%; height: auto; border-radius: 8px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.875rem; }
+    .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border: 1px solid var(--border); border-radius: 2px; vertical-align: -1px; }
+    .region-list { display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+    .region-list li { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
+    .region-list canvas { width: 96px; height: 96px; border-radius: 6px; }
+    .region-name { margin: 0; font-weight: 700; }
+    .region-name span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 2px; vertical-align: 0; }
+    .region-others { margin: 0; color: var(--muted); font-size: 0.875rem; }
 
     footer { color: var(--muted); font-size: 0.875rem; }
     footer a { color: inherit; }
@@ -136,6 +151,7 @@
   <section class="card result" id="result" aria-live="polite" hidden>
     <img id="preview" alt="Your uploaded sky photo">
     <div>
+      <p class="result-heading">Whole photo</p>
       <p class="top-class" id="top-class"></p>
       <p id="no-clouds-text" hidden>We couldn't spot any clouds in this photo. Try a photo that shows more of the sky.</p>
       <p class="hint">Other possible answers:</p>
@@ -144,12 +160,22 @@
     </div>
   </section>
 
+  <section class="card regions" id="regions" aria-live="polite" hidden>
+    <h2>Cloud regions</h2>
+    <p id="regions-summary"></p>
+    <canvas id="map" aria-label="Your photo with the sky and the clouds marked"></canvas>
+    <ul class="legend" id="legend"></ul>
+    <ul class="region-list" id="region-list"></ul>
+  </section>
+
   <section class="card about" id="about">
     <h2>About Nephodea</h2>
     <p>Nephodea is a test version of a cloud type classifier, built as a learning project.</p>
     <p>A small image model looks at your whole photo and estimates how likely each of 12 classes is: 11 cloud types, or no clouds. It is right about 3 times out of 4, so treat its answer as a good guess.</p>
+    <p>To look at clouds one by one, a second model first finds the sky in your photo. Inside the sky, a simple colour rule tells clouds from blue sky: clear sky is much more blue than red, while clouds are white or grey. The cutoff between the two is chosen from each photo's own colours, and grey pixels count as cloud too, so shaded cloud bases are found. The photo is then split into 9 overlapping parts, each part with enough cloud is classified on its own, and the parts are grouped by the cloud type they show. The colour rule can mistake a hazy or sunset sky for cloud.</p>
     <p>The model runs inside your browser. Your photo is not uploaded anywhere.</p>
     <p>The model was trained during a 2024 hackathon. Thanks to the team who helped train it.</p>
+    <p>The sky model is a small U-2-Net by <a href="https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing">xiongzhu666</a>, and the colour rule comes from <a href="https://github.com/yuhao-nie/Cloud-dection-in-sky-images">Yuhao Nie</a>. Both are shared under the MIT licence.</p>
   </section>
 
   <footer><a href="https://github.com/Leleogi/nephodea">Source code on GitHub</a></footer>
@@ -161,12 +187,25 @@
   const IMAGE_SIZE = 640;    // the model was trained on 640 x 640 pixel images
   const UNSURE_BELOW = 0.5;  // below this probability we tell the user the model is unsure
 
+  // Settings for finding cloud regions
+  const SKY_SIZE = 384;       // the sky model works on 384 x 384 pixel images
+  const CLOUD_BELOW = 0.05;   // colour rule: a sky pixel is cloud when (blue - red) / (blue + red) is at most this
+  const MAX_CUTOFF = 0.4;     // the per-photo cutoff is never higher than this
+  const MIN_GAP = 0.25;       // only use a per-photo cutoff when clouds and blue sky are clearly different
+  const GREY_BELOW = 0.12;    // a pixel this low in colour (0 = grey, 1 = pure colour) counts as cloud
+  const OVERCAST = 0.85;      // when this share of the sky is cloud, call all of it cloud
+  const HOLE_BELOW = 0.002;   // blue patches inside a cloud smaller than this share of the photo become cloud
+  const TILE_SIZE = 0.5;      // each of the 9 parts is half the photo's short side
+  const MIN_TILE_SKY = 0.4;   // a part must be at least 40 % sky to be classified
+  const MIN_TILE_CLOUD = 0.05; // and at least 5 % of that sky must be cloud
+
   const form = document.getElementById("upload-form");
   const button = document.getElementById("analyze");
   const fileInput = document.getElementById("photo");
   const errorBox = document.getElementById("error");
 
-  let session = null;  // the loaded model
+  let session = null;     // the loaded cloud type model
+  let skySession = null;  // the loaded sky model
   let labels = [];     // the 12 class names, in the model's order
 
   // Load the model and the class names once, when the page opens
@@ -176,6 +215,7 @@
       ort.env.wasm.numThreads = 1;  // threads need special server settings, one is fast enough
       labels = await (await fetch("labels.json")).json();
       session = await ort.InferenceSession.create("nephodea.onnx");
+      skySession = await ort.InferenceSession.create("sky.onnx");
       button.disabled = false;
       button.textContent = "Analyze";
     } catch (error) {
@@ -210,13 +250,17 @@
     }
   }
 
-  // Prepare the photo the same way as during training:
-  // scale the short side to 640 pixels, cut out the centre square,
-  // and turn the pixels into numbers between 0 and 1.
-  function photoToTensor(photo) {
+  // The centre square of the photo, which is what the model looked at during training
+  function centreSquare(photo) {
     const side = Math.min(photo.width, photo.height);
-    const left = (photo.width - side) / 2;
-    const top = (photo.height - side) / 2;
+    return { left: (photo.width - side) / 2, top: (photo.height - side) / 2, side };
+  }
+
+  // Prepare the photo the same way as during training:
+  // cut out a square (the centre square unless told otherwise), scale it to 640 pixels,
+  // and turn the pixels into numbers between 0 and 1.
+  function photoToTensor(photo, square) {
+    const { left, top, side } = square;
 
     // Shrink in steps of one half: one big jump makes the picture grainy,
     // and the model would then see something different from its training photos
@@ -249,15 +293,356 @@
     return new ort.Tensor("float32", data, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
   }
 
-  // Run the model and return the 5 most likely classes
-  async function classify(photo) {
-    const input = photoToTensor(photo);
+  // Run the model on a square of the photo and return the 5 most likely classes
+  async function classify(photo, square = centreSquare(photo)) {
+    const input = photoToTensor(photo, square);
     const output = await session.run({ [session.inputNames[0]]: input });
     const probabilities = output[session.outputNames[0]].data;
     return Array.from(probabilities)
       .map((probability, index) => ({ name: labels[index], probability }))
       .sort((a, b) => b.probability - a.probability)
       .slice(0, 5);
+  }
+
+  // Step 1: find the sky. The sky model gets the whole photo squeezed to 384 x 384 pixels,
+  // with its colours adjusted the way it was trained (the usual ImageNet averages).
+  // It returns, for every pixel, how likely it is to be sky (0 to 1).
+  async function findSky(photo) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = SKY_SIZE;
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(photo, 0, 0, SKY_SIZE, SKY_SIZE);
+    const pixels = context.getImageData(0, 0, SKY_SIZE, SKY_SIZE).data;
+
+    const mean = [0.485, 0.456, 0.406];
+    const spread = [0.229, 0.224, 0.225];
+    const area = SKY_SIZE * SKY_SIZE;
+    const data = new Float32Array(3 * area);
+    for (let i = 0; i < area; i++) {
+      for (let c = 0; c < 3; c++) {
+        data[c * area + i] = (pixels[i * 4 + c] / 255 - mean[c]) / spread[c];
+      }
+    }
+    const input = new ort.Tensor("float32", data, [1, 3, SKY_SIZE, SKY_SIZE]);
+    const output = await skySession.run({ [skySession.inputNames[0]]: input });
+    return { pixels, sky: output[skySession.outputNames[0]].data };
+  }
+
+  // Otsu's method: the cutoff that best splits a list of values into a low group and a high group.
+  // Returns the cutoff and how far apart the two groups' averages are.
+  function otsu(values, low, high, bins = 100) {
+    const counts = new Float64Array(bins);
+    for (const value of values) {
+      const bin = Math.min(bins - 1, Math.max(0, Math.floor((value - low) / (high - low) * bins)));
+      counts[bin]++;
+    }
+    const centre = bin => low + (bin + 0.5) / bins * (high - low);
+    let total = 0, sum = 0;
+    for (let bin = 0; bin < bins; bin++) { total += counts[bin]; sum += counts[bin] * centre(bin); }
+    let best = { score: -1, cutoff: low, gap: 0 }, lowCount = 0, lowSum = 0;
+    for (let bin = 0; bin < bins - 1; bin++) {
+      lowCount += counts[bin];
+      lowSum += counts[bin] * centre(bin);
+      const highCount = total - lowCount;
+      if (lowCount === 0 || highCount === 0) continue;
+      const gap = (sum - lowSum) / highCount - lowSum / lowCount;
+      const score = lowCount * highCount * gap * gap;
+      if (score > best.score) best = { score, cutoff: low + (bin + 1) / bins * (high - low), gap };
+    }
+    return best;
+  }
+
+  // Step 2: inside the sky, tell clouds from blue sky.
+  // Clear sky scatters much more blue light than red; clouds scatter both about equally,
+  // so they look white or grey, even where they are in shadow.
+  // Returns 0 (not sky), 1 (blue sky) or 2 (cloud) for every pixel.
+  function findClouds(pixels, sky) {
+    const area = SKY_SIZE * SKY_SIZE;
+    const ratio = new Float32Array(area);  // (blue - red) / (blue + red)
+    const grey = new Uint8Array(area);     // 1 when the pixel has almost no colour
+    const skyRatios = [];
+    for (let i = 0; i < area; i++) {
+      const red = pixels[i * 4], green = pixels[i * 4 + 1], blue = pixels[i * 4 + 2];
+      ratio[i] = red + blue === 0 ? 0 : (blue - red) / (blue + red);
+      const brightest = Math.max(red, green, blue), darkest = Math.min(red, green, blue);
+      grey[i] = brightest > 0 && (brightest - darkest) / brightest <= GREY_BELOW ? 1 : 0;
+      if (sky[i] >= 0.5) skyRatios.push(ratio[i]);
+    }
+
+    // D: choose the cutoff from this photo's own colours. If the sky splits clearly into
+    // "less blue" and "very blue" pixels, cut between them; otherwise keep the fixed rule.
+    let cutoff = CLOUD_BELOW;
+    const split = skyRatios.length ? otsu(skyRatios, -0.3, 1) : null;
+    if (split && split.gap >= MIN_GAP) cutoff = Math.min(MAX_CUTOFF, Math.max(CLOUD_BELOW, split.cutoff));
+
+    const map = new Uint8Array(area);
+    let skyCount = 0, cloudCount = 0;
+    for (let i = 0; i < area; i++) {
+      if (sky[i] < 0.5) continue;
+      skyCount++;
+      // E: a pixel is cloud when it is not very blue, or when it is grey (shaded cloud bases)
+      map[i] = ratio[i] <= cutoff || grey[i] ? 2 : 1;
+      if (map[i] === 2) cloudCount++;
+    }
+
+    // G: when nearly the whole sky is cloud, call all of it cloud
+    if (skyCount && cloudCount / skyCount >= OVERCAST) {
+      for (let i = 0; i < area; i++) if (map[i] === 1) map[i] = 2;
+    }
+
+    fillHoles(map);
+
+    let finalCloud = 0;
+    for (let i = 0; i < area; i++) if (map[i] === 2) finalCloud++;
+    return { map, skyShare: skyCount / area, cloudShare: skyCount ? finalCloud / skyCount : 0 };
+  }
+
+  // F: small patches of blue sky that are surrounded by cloud are usually part of the cloud
+  // (a darker or bluish spot), so they are turned into cloud
+  function fillHoles(map) {
+    const seen = new Uint8Array(map.length);
+    const maxHole = HOLE_BELOW * map.length;
+    for (let start = 0; start < map.length; start++) {
+      if (map[start] !== 1 || seen[start]) continue;
+      const patch = [start], stack = [start];
+      seen[start] = 1;
+      let touchesOther = false;  // touches something that is not cloud (the edge or non-sky)
+      while (stack.length) {
+        const index = stack.pop();
+        const x = index % SKY_SIZE, y = Math.floor(index / SKY_SIZE);
+        if (x === 0 || y === 0 || x === SKY_SIZE - 1 || y === SKY_SIZE - 1) touchesOther = true;
+        for (const next of [x > 0 ? index - 1 : -1, x < SKY_SIZE - 1 ? index + 1 : -1,
+                            y > 0 ? index - SKY_SIZE : -1, y < SKY_SIZE - 1 ? index + SKY_SIZE : -1]) {
+          if (next < 0) continue;
+          if (map[next] === 0) touchesOther = true;
+          if (map[next] === 1 && !seen[next]) {
+            seen[next] = 1;
+            stack.push(next);
+            patch.push(next);
+          }
+        }
+      }
+      if (!touchesOther && patch.length <= maxHole) {
+        for (const index of patch) map[index] = 2;
+      }
+    }
+  }
+
+  // Step 3: the 9 overlapping squares (3 across, 3 down) that are classified one by one.
+  // Each square is half the photo's short side, so the model still sees a fair piece of sky.
+  function makeTiles(photo) {
+    const side = TILE_SIZE * Math.min(photo.width, photo.height);
+    const tiles = [];
+    for (let row = 0; row < 3; row++) {
+      for (let column = 0; column < 3; column++) {
+        tiles.push({
+          row, column,
+          square: { left: column * (photo.width - side) / 2, top: row * (photo.height - side) / 2, side },
+        });
+      }
+    }
+    return tiles;
+  }
+
+  // How much of a square is sky, and how much of that sky is cloud
+  function measureTile(photo, map, square) {
+    const x0 = Math.floor(square.left / photo.width * SKY_SIZE);
+    const x1 = Math.ceil((square.left + square.side) / photo.width * SKY_SIZE);
+    const y0 = Math.floor(square.top / photo.height * SKY_SIZE);
+    const y1 = Math.ceil((square.top + square.side) / photo.height * SKY_SIZE);
+    let all = 0, skyCount = 0, cloudCount = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const value = map[y * SKY_SIZE + x];
+        all++;
+        if (value > 0) skyCount++;
+        if (value === 2) cloudCount++;
+      }
+    }
+    return { skyShare: skyCount / all, cloudShare: skyCount ? cloudCount / skyCount : 0 };
+  }
+
+  // Run the model on a square and keep all 12 probabilities
+  async function probabilities(photo, square) {
+    const output = await session.run({ [session.inputNames[0]]: photoToTensor(photo, square) });
+    return Array.from(output[session.outputNames[0]].data);
+  }
+
+  // Step 4: group the parts by the cloud type they show
+  function groupTiles(tiles) {
+    const groups = [];
+    for (const label of new Set(tiles.map(tile => tile.label).filter(Boolean))) {
+      const members = tiles.filter(tile => tile.label === label);
+      // Average the probabilities of the parts in the group
+      const average = labels.map((name, index) =>
+        members.reduce((total, member) => total + member.probabilities[index], 0) / members.length);
+      const ranked = average.map((probability, index) => ({ name: labels[index], probability }))
+        .sort((a, b) => b.probability - a.probability);
+      // The part where this type is clearest becomes the thumbnail
+      const index = labels.indexOf(label);
+      const example = members.reduce((a, b) => (b.probabilities[index] > a.probabilities[index] ? b : a));
+      groups.push({ label, members, ranked, example });
+    }
+    return groups.sort((a, b) => b.members.length - a.members.length || b.ranked[0].probability - a.ranked[0].probability);
+  }
+
+  // Run all steps: sky, clouds, tiles, segments
+  async function analyseRegions(photo) {
+    const { pixels, sky } = await findSky(photo);
+    const { map, skyShare, cloudShare } = findClouds(pixels, sky);
+    const tiles = makeTiles(photo);
+    for (const tile of tiles) {
+      Object.assign(tile, measureTile(photo, map, tile.square));
+      if (tile.skyShare < MIN_TILE_SKY) {
+        tile.kind = "not sky";
+      } else if (tile.cloudShare < MIN_TILE_CLOUD) {
+        tile.kind = "clear";
+      } else {
+        tile.probabilities = await probabilities(photo, tile.square);
+        const top = tile.probabilities.indexOf(Math.max(...tile.probabilities));
+        tile.label = labels[top];
+        tile.kind = tile.label === "not_cloud" ? "unclear" : "cloud";
+        if (tile.label === "not_cloud") tile.label = null;  // not joined into a segment
+      }
+    }
+    return { map, skyShare, cloudShare, tiles, segments: groupTiles(tiles) };
+  }
+
+  // Colours for the cloud types on the map
+  const TYPE_COLOURS = {
+    altocumulus: [230, 159, 0], altostratus: [86, 180, 233], cirrocumulus: [0, 158, 115],
+    cirrostratus: [240, 228, 66], cirrus: [0, 114, 178], cumulonimbus: [213, 94, 0],
+    cumulus: [204, 121, 167], mixed_clouds: [120, 120, 120], nimbostratus: [90, 60, 160],
+    stratocumulus: [160, 200, 60], stratus: [150, 110, 70],
+  };
+  const UNKNOWN_CLOUD = [255, 255, 255];
+
+  // Draw the photo with the map on top: dark where there is no sky, and cloud pixels
+  // tinted with the colour of the cloud type found in that part of the photo
+  function drawMap(photo, map, tiles) {
+    // Each pixel takes its colour from the tile whose centre is closest
+    const tileColour = tile => (tile.label ? TYPE_COLOURS[tile.label] || UNKNOWN_CLOUD : UNKNOWN_CLOUD);
+    const centres = tiles.map(tile => ({
+      x: (tile.square.left + tile.square.side / 2) / photo.width,
+      y: (tile.square.top + tile.square.side / 2) / photo.height,
+      colour: tileColour(tile),
+    }));
+    const overlay = document.createElement("canvas");
+    overlay.width = overlay.height = SKY_SIZE;
+    const overlayContext = overlay.getContext("2d");
+    const image = overlayContext.createImageData(SKY_SIZE, SKY_SIZE);
+    for (let i = 0; i < map.length; i++) {
+      if (map[i] === 0) {
+        image.data.set([0, 0, 0, 140], i * 4);
+      } else if (map[i] === 2) {
+        const x = (i % SKY_SIZE + 0.5) / SKY_SIZE, y = (Math.floor(i / SKY_SIZE) + 0.5) / SKY_SIZE;
+        let nearest = centres[0], distance = Infinity;
+        for (const centre of centres) {
+          const d = (centre.x - x) ** 2 + (centre.y - y) ** 2;
+          if (d < distance) { distance = d; nearest = centre; }
+        }
+        image.data.set([...nearest.colour, 100], i * 4);
+      }
+    }
+    overlayContext.putImageData(image, 0, 0);
+
+    const canvas = document.getElementById("map");
+    const scale = Math.min(1, 1200 / Math.max(photo.width, photo.height));
+    canvas.width = Math.round(photo.width * scale);
+    canvas.height = Math.round(photo.height * scale);
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+    context.drawImage(overlay, 0, 0, canvas.width, canvas.height);
+  }
+
+  function colourSwatch(colour, opacity = 0.75) {
+    const swatch = document.createElement("span");
+    swatch.style.background = "rgba(" + colour.join(", ") + ", " + opacity + ")";
+    return swatch;
+  }
+
+  function showRegions(photo, analysis) {
+    const { map, skyShare, cloudShare, tiles, segments } = analysis;
+    drawMap(photo, map, tiles);
+
+    let summary;
+    if (skyShare < 0.02) {
+      summary = "We couldn't find any sky in this photo.";
+    } else {
+      summary = "About " + Math.round(skyShare * 100) + " % of the photo is sky, and clouds cover about " +
+        Math.round(cloudShare * 100) + " % of that sky.";
+      const types = segments.length;
+      if (segments.length === 0) {
+        summary += tiles.some(tile => tile.kind === "unclear")
+          ? " The model couldn't recognise a cloud type in any part of the photo."
+          : " The sky looks clear, so there are no clouds to classify.";
+      } else if (types === 1) {
+        summary += " We split the photo into 9 overlapping parts and found one cloud type.";
+      } else {
+        summary += " We split the photo into 9 overlapping parts and found " + types + " different cloud types.";
+      }
+    }
+    document.getElementById("regions-summary").textContent = summary;
+
+    // Legend: one entry per cloud type on the map, plus not sky
+    const legend = document.getElementById("legend");
+    legend.replaceChildren();
+    for (const label of new Set(segments.map(segment => segment.label))) {
+      const item = document.createElement("li");
+      item.append(colourSwatch(TYPE_COLOURS[label] || UNKNOWN_CLOUD), displayName(label));
+      legend.appendChild(item);
+    }
+    if (tiles.some(tile => tile.kind === "unclear" || tile.kind === "clear")) {
+      const item = document.createElement("li");
+      item.append(colourSwatch(UNKNOWN_CLOUD, 0.5), "Cloud, type unclear");
+      legend.appendChild(item);
+    }
+    const notSky = document.createElement("li");
+    notSky.append(colourSwatch([0, 0, 0], 0.55), "Not sky");
+    legend.appendChild(notSky);
+
+    const list = document.getElementById("region-list");
+    list.replaceChildren();
+    for (const segment of segments) {
+      const item = document.createElement("li");
+
+      const thumbnail = document.createElement("canvas");
+      thumbnail.width = thumbnail.height = 192;
+      const { left, top, side } = segment.example.square;
+      thumbnail.getContext("2d").drawImage(photo, left, top, side, side, 0, 0, 192, 192);
+      thumbnail.setAttribute("aria-hidden", "true");
+
+      const text = document.createElement("div");
+      const best = segment.ranked[0];
+      const name = document.createElement("p");
+      name.className = "region-name";
+      name.append(colourSwatch(TYPE_COLOURS[segment.label] || UNKNOWN_CLOUD),
+        displayName(segment.label) + ", " + percent(best.probability));
+      const where = document.createElement("p");
+      where.className = "region-others";
+      where.textContent = "Found in " + segment.members.length + " of 9 parts (" +
+        segment.members.map(member => partName(member)).join(", ") + ")";
+      const others = document.createElement("p");
+      others.className = "region-others";
+      others.textContent = "Next: " + segment.ranked.slice(1, 3)
+        .map(other => displayName(other.name) + " " + percent(other.probability)).join(", ");
+      text.append(name, where, others);
+
+      item.append(thumbnail, text);
+      list.appendChild(item);
+    }
+
+    document.getElementById("regions").hidden = false;
+  }
+
+  // A readable name for a tile's place in the photo, e.g. "top left"
+  function partName(tile) {
+    const row = ["top", "middle", "bottom"][tile.row];
+    const column = ["left", "centre", "right"][tile.column];
+    if (row === "middle" && column === "centre") return "centre";
+    return row + " " + column;
   }
 
   function showResult(file, topFive) {
@@ -299,7 +684,10 @@
     button.textContent = "Analyzing…";
     try {
       const photo = await openPhoto(file);
+      document.getElementById("regions").hidden = true;
       showResult(file, await classify(photo));
+      button.textContent = "Looking for cloud regions…";
+      showRegions(photo, await analyseRegions(photo));
     } catch (error) {
       console.error(error);
       showError(error.message || "Something went wrong. Please try another photo.");
