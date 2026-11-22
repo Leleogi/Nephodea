@@ -39,6 +39,9 @@
 
     * { box-sizing: border-box; }
 
+    /* Keep hidden parts hidden, even when another rule sets how they are laid out */
+    [hidden] { display: none !important; }
+
     body {
       margin: 0;
       background: var(--background);
