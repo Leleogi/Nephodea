@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Nephodea: Cloud Type Classifier</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Upload a photo of the sky and find out which clouds it shows. Runs in your browser.">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #f3f6fa;
+      --card: #ffffff;
+      --text: #17212b;
+      --muted: #5b6875;
+      --accent: #1f6fb2;
+      --accent-text: #ffffff;
+      --border: #d8e0e8;
+      --error-background: #fdecea;
+      --error-text: #9b1c13;
+      --note-background: #fff5db;
+      --note-text: #6b4e00;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #10161c;
+        --card: #1a232c;
+        --text: #eef2f6;
+        --muted: #a3b0bc;
+        --accent: #5aa9e6;
+        --accent-text: #0c1319;
+        --border: #33414e;
+        --error-background: #3d1b18;
+        --error-text: #ffb4ab;
+        --note-background: #372c0c;
+        --note-text: #f4d67a;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 32px 16px;
+    }
+
+    h1 { margin: 0; font-size: 1.75rem; line-height: 1.2; }
+
+    .intro { margin: 4px 0 24px; color: var(--muted); }
+
+    .card {
+      margin-bottom: 16px;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    label { display: block; margin-bottom: 8px; font-weight: 600; }
+
+    input[type="file"] { display: block; width: 100%; margin-bottom: 4px; font: inherit; }
+
+    .hint { margin: 0 0 16px; color: var(--muted); font-size: 0.875rem; }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      color: var(--accent-text);
+      border: 0;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: 0.65; cursor: wait; }
+
+    .message { margin: 0 0 16px; padding: 12px 16px; border-radius: 8px; }
+    .error { background: var(--error-background); color: var(--error-text); }
+    .note { margin: 16px 0 0; background: var(--note-background); color: var(--note-text); }
+
+    .result { display: grid; gap: 20px; }
+
+    .result img { display: block; width: 100%; height: auto; border-radius: 8px; }
+
+    .top-class { margin: 0; font-size: 2rem; font-weight: 700; line-height: 1.2; }
+
+    .others { margin: 16px 0 0; padding: 0; list-style: none; color: var(--muted); }
+    .others li { margin-bottom: 10px; }
+
+    /* A thin bar under each answer that shows its probability */
+    .bar { height: 6px; margin-top: 4px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: var(--accent); }
+
+    /* Photo next to the result on larger screens, above it on a phone */
+    @media (min-width: 640px) {
+      .result { grid-template-columns: 1fr 1fr; align-items: start; }
+    }
+
+    .about { color: var(--muted); font-size: 0.95rem; }
+    .about h2 { margin: 0 0 8px; font-size: 1.1rem; color: var(--text); }
+    .about p { margin: 0 0 8px; }
+
+    footer { color: var(--muted); font-size: 0.875rem; }
+    footer a { color: inherit; }
+    </style>
+</head>
+<body>
+<main>
+  <h1>Nephodea</h1>
+  <p class="intro">Upload a photo of the sky to find out which clouds it shows.</p>
+
+  <form class="card" id="upload-form">
+    <p class="message error" id="error" role="alert" hidden></p>
+
+    <label for="photo">Your sky photo</label>
+    <input type="file" name="photo" id="photo" accept="image/*" required>
+    <p class="hint">JPEG or PNG work everywhere; HEIC works in Safari. Your photo never leaves your device.</p>
+
+    <button type="submit" id="analyze" disabled>Loading the model…</button>
+  </form>
+
+  <section class="card result" id="result" aria-live="polite" hidden>
+    <img id="preview" alt="Your uploaded sky photo">
+    <div>
+      <p class="top-class" id="top-class"></p>
+      <p id="no-clouds-text" hidden>We couldn't spot any clouds in this photo. Try a photo that shows more of the sky.</p>
+      <p class="hint">Other possible answers:</p>
+      <ul class="others" id="others"></ul>
+      <p class="message note" id="unsure" hidden>The model is unsure about this photo, so take this result with a grain of salt.</p>
+    </div>
+  </section>
+
+  <section class="card about" id="about">
+    <h2>About Nephodea</h2>
+    <p>Nephodea is a test version of a cloud type classifier, built as a learning project.</p>
+    <p>A small image model looks at your whole photo and estimates how likely each of 12 classes is: 11 cloud types, or no clouds. It is right about 3 times out of 4, so treat its answer as a good guess.</p>
+    <p>The model runs inside your browser. Your photo is not uploaded anywhere.</p>
+    <p>The model was trained during a 2024 hackathon. Thanks to the team who helped train it.</p>
+  </section>
+
+  <footer><a href="https://github.com/Leleogi/nephodea">Source code on GitHub</a></footer>
+</main>
+
+<!-- ONNX Runtime Web runs the model in the browser. The files are kept in vendor/ so the page needs no other website. -->
+<script src="vendor/onnxruntime-web/ort.wasm.min.js"></script>
+<script>
+  const IMAGE_SIZE = 640;    // the model was trained on 640 x 640 pixel images
+  const UNSURE_BELOW = 0.5;  // below this probability we tell the user the model is unsure
+
+  const form = document.getElementById("upload-form");
+  const button = document.getElementById("analyze");
+  const fileInput = document.getElementById("photo");
+  const errorBox = document.getElementById("error");
+
+  let session = null;  // the loaded model
+  let labels = [];     // the 12 class names, in the model's order
+
+  // Load the model and the class names once, when the page opens
+  async function loadModel() {
+    try {
+      ort.env.wasm.wasmPaths = new URL("vendor/onnxruntime-web/", document.baseURI).href;
+      ort.env.wasm.numThreads = 1;  // threads need special server settings, one is fast enough
+      labels = await (await fetch("labels.json")).json();
+      session = await ort.InferenceSession.create("nephodea.onnx");
+      button.disabled = false;
+      button.textContent = "Analyze";
+    } catch (error) {
+      console.error(error);
+      showError("The model could not be loaded. Please reload the page.");
+      button.textContent = "Not available";
+    }
+  }
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.hidden = !message;
+  }
+
+  // Make a class name readable, e.g. mixed_clouds becomes Mixed clouds
+  function displayName(name) {
+    if (name === "not_cloud") return "No clouds";
+    const text = name.replace("_", " ");
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  function percent(probability) {
+    return (probability * 100).toFixed(1) + " %";
+  }
+
+  // Open the photo, turned upright using its rotation information
+  async function openPhoto(file) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (error) {
+      throw new Error("This file could not be read as a photo. Please choose a JPEG or PNG image.");
+    }
+  }
+
+  // Prepare the photo the same way as during training:
+  // scale the short side to 640 pixels, cut out the centre square,
+  // and turn the pixels into numbers between 0 and 1.
+  function photoToTensor(photo) {
+    const side = Math.min(photo.width, photo.height);
+    const left = (photo.width - side) / 2;
+    const top = (photo.height - side) / 2;
+
+    // Shrink in steps of one half: one big jump makes the picture grainy,
+    // and the model would then see something different from its training photos
+    let source = photo, sx = left, sy = top, size = side;
+    while (size / 2 >= IMAGE_SIZE) {
+      const half = document.createElement("canvas");
+      half.width = half.height = Math.round(size / 2);
+      const halfContext = half.getContext("2d");
+      halfContext.imageSmoothingQuality = "high";
+      halfContext.drawImage(source, sx, sy, size, size, 0, 0, half.width, half.height);
+      source = half; sx = 0; sy = 0; size = half.width;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = IMAGE_SIZE;
+    canvas.height = IMAGE_SIZE;
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(source, sx, sy, size, size, 0, 0, IMAGE_SIZE, IMAGE_SIZE);
+    const pixels = context.getImageData(0, 0, IMAGE_SIZE, IMAGE_SIZE).data;  // red, green, blue, alpha, red, ...
+
+    // The model wants all red values first, then all green, then all blue
+    const area = IMAGE_SIZE * IMAGE_SIZE;
+    const data = new Float32Array(3 * area);
+    for (let i = 0; i < area; i++) {
+      data[i] = pixels[i * 4] / 255;
+      data[area + i] = pixels[i * 4 + 1] / 255;
+      data[2 * area + i] = pixels[i * 4 + 2] / 255;
+    }
+    return new ort.Tensor("float32", data, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+  }
+
+  // Run the model and return the 5 most likely classes
+  async function classify(photo) {
+    const input = photoToTensor(photo);
+    const output = await session.run({ [session.inputNames[0]]: input });
+    const probabilities = output[session.outputNames[0]].data;
+    return Array.from(probabilities)
+      .map((probability, index) => ({ name: labels[index], probability }))
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, 5);
+  }
+
+  function showResult(file, topFive) {
+    const best = topFive[0];
+    const noClouds = best.name === "not_cloud";
+
+    document.getElementById("preview").src = URL.createObjectURL(file);
+    document.getElementById("top-class").textContent =
+      noClouds ? "No clouds recognized" : displayName(best.name) + ", " + percent(best.probability);
+    document.getElementById("no-clouds-text").hidden = !noClouds;
+    document.getElementById("unsure").hidden = best.probability >= UNSURE_BELOW;
+
+    const list = document.getElementById("others");
+    list.replaceChildren();
+    for (const other of topFive.slice(1)) {
+      const item = document.createElement("li");
+      item.textContent = displayName(other.name) + ", " + percent(other.probability);
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const fill = document.createElement("span");
+      fill.style.width = Math.round(other.probability * 100) + "%";
+      bar.appendChild(fill);
+      item.appendChild(bar);
+      list.appendChild(item);
+    }
+
+    const result = document.getElementById("result");
+    result.hidden = false;
+    result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const file = fileInput.files[0];
+    if (!file || !session) return;
+
+    showError("");
+    button.disabled = true;
+    button.textContent = "Analyzing…";
+    try {
+      const photo = await openPhoto(file);
+      showResult(file, await classify(photo));
+    } catch (error) {
+      console.error(error);
+      showError(error.message || "Something went wrong. Please try another photo.");
+    }
+    button.disabled = false;
+    button.textContent = "Analyze";
+  });
+
+  loadModel();
+</script>
+</body>
+</html>
