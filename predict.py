@@ -17,9 +17,9 @@ def main():
     # Run inference on the image
     result = model(sys.argv[1], device="cpu", verbose=False)[0]
 
-    # Print the 3 most likely classes
+    # Print the 5 most likely classes
     probs = result.probs  # Probs object for classification outputs
-    for class_id, confidence in zip(probs.top5[:3], probs.top5conf[:3].tolist()):
+    for class_id, confidence in zip(probs.top5, probs.top5conf.tolist()):
         print(f"{result.names[class_id]}: {confidence:.1%}")
 
 

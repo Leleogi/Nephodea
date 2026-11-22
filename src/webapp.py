@@ -48,10 +48,10 @@ def load_photo(upload):
 
 
 def classify(photo):
-    """Return the 3 most likely classes as a list of (class name, probability)."""
+    """Return the 5 most likely classes as a list of (class name, probability)."""
     with model_lock:
         probs = model(photo, device="cpu", verbose=False)[0].probs
-    top_classes = zip(probs.top5[:3], probs.top5conf[:3].tolist())
+    top_classes = zip(probs.top5, probs.top5conf.tolist())
     return [(model.names[class_id], confidence) for class_id, confidence in top_classes]
 
 
@@ -75,7 +75,11 @@ def build_result(photo):
     """Put together everything the page needs to show the result."""
     top_classes = classify(photo)
     results = [
-        {"name": display_name(name), "percent": f"{confidence * 100:.1f} %"}
+        {
+            "name": display_name(name),
+            "percent": f"{confidence * 100:.1f} %",
+            "bar_width": round(confidence * 100),  # width of the bar on the page, 0 to 100
+        }
         for name, confidence in top_classes
     ]
     return {
@@ -107,7 +111,7 @@ def main():
 
 @app.route("/about")
 def about_page():
-    return "Test Version of the Cloud Image Classifier CloudAI by Leandro Gimmi, Michael Herrmann, Capucine Lechartre and Melina Abeling"
+    return render_template("about.html")
 
 
 def show_error(message, status):

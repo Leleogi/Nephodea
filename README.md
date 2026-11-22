@@ -30,6 +30,8 @@ Classify one photo from the command line:
 python predict.py path/to/photo.jpg
 ```
 
+This prints the 5 most likely cloud types.
+
 Start the web app, then open http://127.0.0.1:5001 in your browser:
 
 ```bash
