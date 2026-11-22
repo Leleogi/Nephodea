@@ -16,14 +16,14 @@ This started as a 2024 hackathon team project (then called CloudAI). Training wa
   0 altocumulus, 1 altostratus, 2 cirrocumulus, 3 cirrostratus, 4 cirrus, 5 cumulonimbus, 6 cumulus, 7 mixed_clouds, 8 nimbostratus, 9 not_cloud, 10 stratocumulus, 11 stratus
 - Read the class names from the model itself (`model.names`) instead of hardcoding them.
 - "not_cloud" means the photo probably does not show clouds. Show a friendly message in that case.
-- Showing the top 3 classes with probabilities is the best way to answer "which cloud(s) can be seen", since the model returns one probability per class.
+- Showing the top 5 classes with probabilities is the best way to answer "which cloud(s) can be seen", since the model returns one probability per class.
 - Do NOT retrain or modify the weights unless I ask.
 - The original training data, cluster scripts and project template are NOT in this repository. They stay only in the owner's local folder.
 
 ## What already exists
 - `src/webapp.py`: Flask app. Loads the model once at startup, checks uploads, keeps photos in memory only and never writes them to disk. Runs on port 5001 because macOS often uses 5000 for AirPlay. Uses Flask's built-in server, which is for local use only.
 - `src/templates/index.html`: the upload and result page (no outside CSS or JavaScript).
-- `predict.py`: command-line test script. Loads `current_model.pt` and prints the top 3 classes for one image. Works.
+- `predict.py`: command-line test script. Loads `current_model.pt` and prints the top 5 classes for one image. Works.
 - `venv310/`: the environment to use (Python 3.10, Apple Silicon, git-ignored). It depends on `python310/`, which holds the Python itself (also git-ignored). Do not delete `python310/`.
 - `venv/`: old, unused Python 3.9 Intel environment with no project packages (git-ignored). Do not use it: OpenCV tries to compile from source there.
 - `test_images/`: the owner's test photos (git-ignored, because they contain GPS locations).
