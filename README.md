@@ -14,13 +14,18 @@ On its validation set, the correct class was the top answer for 73 % of the phot
 
 ## Cloud regions
 
-The live page also looks at clouds one by one, in three steps:
+The live page also looks at different parts of the photo, so it can find more than one cloud type:
 
 1. **Find the sky.** A small sky segmentation model (U-2-Net, about 4.5 MB) marks which pixels of the photo are sky.
-2. **Tell clouds from blue sky.** Inside the sky, a colour rule decides for each pixel: clear sky scatters much more blue light than red, while clouds look white or grey. A pixel counts as cloud when (blue − red) / (blue + red) is 0.05 or less.
-3. **Classify each cloud region.** Cloud pixels that touch are grouped into regions. The biggest ones (up to 4) are cut out as squares and classified on their own.
+2. **Tell clouds from blue sky.** Inside the sky, a colour rule decides for each pixel: clear sky scatters much more blue light than red, while clouds look white or grey. The rule uses (blue − red) / (blue + red):
+   - the cutoff is chosen from each photo's own colours (Otsu's method), and falls back to 0.05 when the photo has no clear split between cloud and blue sky,
+   - grey pixels always count as cloud, so shaded cloud bases are found,
+   - small blue patches inside a cloud are filled in,
+   - when nearly the whole sky is cloud, all of it counts as cloud (overcast).
+3. **Classify 9 parts.** The photo is split into 3 × 3 overlapping squares, each half the photo's short side. Every square that is mostly sky and has some cloud is classified on its own.
+4. **Group by type.** Parts with the same answer are grouped, and the map colours the clouds by type.
 
-The colour rule is simple, so a hazy sky near the horizon, a sunset or a night sky can be mistaken for cloud.
+The colour rule is simple, so a hazy sky near the horizon, a sunset or a night sky can be mistaken for cloud. The model was trained on whole photos, so its answers for the smaller parts are less reliable than for the whole photo.
 
 On the live page the model runs in your browser, so photos are never uploaded. The Flask version keeps uploaded photos in memory only while it analyses them and never saves them.
 
